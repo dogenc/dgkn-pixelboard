@@ -59,15 +59,18 @@
     background: #800;
   }
 
+  /* Login-Fenster */
   #loginBox {
     position: fixed;
     top: 50%;
     left: 50%;
     transform: translate(-50%,-50%);
-    background: rgba(0,0,0,0.85);
-    padding: 20px;
-    border-radius: 10px;
+    background: rgba(0,0,0,0.9);
+    padding: 30px;
+    border-radius: 12px;
     display: none;
+    text-align: center;
+    box-shadow: 0 0 15px rgba(255,255,255,0.1);
   }
 
   #loginBox input {
@@ -89,6 +92,20 @@
     border-radius: 4px;
     cursor: pointer;
     padding: 2px 6px;
+    font-weight: bold;
+  }
+
+  /* Drehendes D-Logo */
+  #logoD {
+    font-size: 40px;
+    color: #ffcc00;
+    margin-bottom: 15px;
+    animation: rotateD 3s linear infinite;
+  }
+
+  @keyframes rotateD {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
 
   canvas {
@@ -119,6 +136,7 @@
 
 <div id="loginBox">
   <button id="closeLogin">X</button>
+  <div id="logoD">D</div>
   <input type="email" id="email" placeholder="E-Mail"><br>
   <input type="password" id="password" placeholder="Passwort"><br>
   <button id="loginBtn">Anmelden</button>
@@ -183,16 +201,18 @@ onValue(boardRef, snapshot => {
   }
 });
 
-// === Lausche auf Admin-Reset ===
+// Lausche auf Admin-Reset (lädt Board neu)
 onValue(resetRef, snapshot => {
   if (!snapshot.exists()) return;
-  console.log("Admin-Reset erkannt – Board wird geleert (nur durch Server)");
-  
-  // Nur Clients, die nicht Admin sind, löschen ihr lokales Board
-  if (!admin) {
-    pixels = Array(gridSize * gridSize).fill("#000000");
-    draw();
-  }
+  console.log("Admin-Reset erkannt – Board wird neu geladen");
+  onValue(boardRef, snap => {
+    const data = snap.val();
+    if (data && Array.isArray(data)) {
+      pixels = data;
+      applyPixels();
+      draw();
+    }
+  }, { onlyOnce: true });
 });
 
 function applyPixels() {
@@ -248,11 +268,10 @@ canvas.addEventListener("click", e => {
   set(boardRef, pixels);
 });
 
-// === Admin Login/Logout ===
+// === Login-Steuerung ===
 adminBtn.addEventListener("click", () => {
   loginBox.style.display = "block";
 });
-
 closeLogin.addEventListener("click", () => {
   loginBox.style.display = "none";
 });
@@ -261,7 +280,7 @@ loginBtn.addEventListener("click", async () => {
   try {
     const userCred = await signInWithEmailAndPassword(auth, emailField.value, passField.value);
     console.log("Eingeloggt:", userCred.user.email);
-    loginBox.style.display = "none";   // Login-Feld schließen
+    loginBox.style.display = "none";
     emailField.value = passField.value = "";
   } catch (err) {
     alert("Login fehlgeschlagen: " + err.message);
@@ -291,19 +310,21 @@ onAuthStateChanged(auth, user => {
   }
 });
 
-// === Reset (nur Admin darf löschen) ===
+// === Reset (nur Admin darf löschen, stabil) ===
 resetBtn.addEventListener("click", async () => {
   if (!admin) return;
   if (confirm("Wirklich alles löschen?")) {
-    pixels = Array(gridSize * gridSize).fill("#000000");
-    await set(boardRef, pixels); // Admin leert die DB wirklich
-    await set(resetRef, Math.random().toString(36).substring(2)); // Signal an Clients
-    console.log("Board wurde von Admin gelöscht");
+    try {
+      const emptyPixels = Array(gridSize * gridSize).fill("#000000");
+      await set(boardRef, emptyPixels);
+      await set(resetRef, Math.random().toString(36).substring(2));
+      console.log("Board wurde vollständig zurückgesetzt.");
+    } catch (err) {
+      console.error("Fehler beim Reset:", err);
+      alert("Fehler beim Löschen – bitte später erneut versuchen.");
+    }
   }
 });
-
 </script>
 </body>
 </html>
-
-
