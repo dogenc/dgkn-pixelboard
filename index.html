@@ -59,6 +59,26 @@
     background: #800;
   }
 
+  #loginBox {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%,-50%);
+    background: rgba(0,0,0,0.85);
+    padding: 20px;
+    border-radius: 10px;
+    display: none;
+  }
+
+  #loginBox input {
+    margin-bottom: 6px;
+    width: 180px;
+    padding: 5px;
+    border: none;
+    border-radius: 4px;
+    outline: none;
+  }
+
   canvas {
     display: block;
     width: 100%;
@@ -66,32 +86,40 @@
     image-rendering: pixelated;
   }
 </style>
-<!-- Google tag (gtag.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-Z3SWKGXDK6"></script>
-    <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'G-Z3SWKGXDK6');
-    </script>
+<!-- Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-Z3SWKGXDK6"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-Z3SWKGXDK6');
+</script>
 </head>
 <body>
 <header>DGKN PIXELBOARD (LIVE)</header>
 
 <div id="ui">
   <input type="color" id="color" value="#ff0000">
-  <button id="adminToggle">Admin</button>
+  <button id="adminToggle">Login</button>
   <button id="resetBtn">Alles löschen</button>
+</div>
+
+<div id="loginBox">
+  <input type="email" id="email" placeholder="E-Mail"><br>
+  <input type="password" id="password" placeholder="Passwort"><br>
+  <button id="loginBtn">Anmelden</button>
+  <button id="logoutBtn" style="display:none;">Abmelden</button>
 </div>
 
 <canvas id="canvas"></canvas>
 
-<!-- ==== Firebase Realtime Sync ==== -->
+<!-- ==== Firebase Pixelboard mit offenen Schreibrechten ==== -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
 import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-database.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js";
 
-// === Deine Firebase-Konfiguration ===
+// === Firebase-Konfiguration ===
 const firebaseConfig = {
   apiKey: "AIzaSyAOLfz_Fr1r9U8Wf0WbZsI9cpkdgXpsIXY",
   authDomain: "dgkn-pixelboard.firebaseapp.com",
@@ -105,6 +133,7 @@ const firebaseConfig = {
 // Firebase initialisieren
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
+const auth = getAuth(app);
 
 // === Board Setup ===
 const gridSize = 75;
@@ -113,6 +142,11 @@ const ctx = canvas.getContext("2d");
 const colorPicker = document.getElementById("color");
 const adminBtn = document.getElementById("adminToggle");
 const resetBtn = document.getElementById("resetBtn");
+const loginBox = document.getElementById("loginBox");
+const loginBtn = document.getElementById("loginBtn");
+const logoutBtn = document.getElementById("logoutBtn");
+const emailField = document.getElementById("email");
+const passField = document.getElementById("password");
 
 let admin = false;
 const pixelCanvas = document.createElement("canvas");
@@ -120,10 +154,11 @@ pixelCanvas.width = gridSize;
 pixelCanvas.height = gridSize;
 const pctx = pixelCanvas.getContext("2d");
 
-const boardRef = ref(db, "pixels");
+const boardRef = ref(db, "public/pixels");
+const resetRef = ref(db, "admin/reset");
 let pixels = Array(gridSize * gridSize).fill("#000000");
 
-// Echtzeit-Aktualisierung
+// Echtzeit-Aktualisierung (alle)
 onValue(boardRef, snapshot => {
   const data = snapshot.val();
   if (data && Array.isArray(data)) {
@@ -131,6 +166,14 @@ onValue(boardRef, snapshot => {
     applyPixels();
     draw();
   }
+});
+
+// Lausche auf Admin-Reset
+onValue(resetRef, snapshot => {
+  if (!snapshot.exists()) return;
+  console.log("Admin-Reset erkannt – Board wird geleert");
+  pixels = Array(gridSize * gridSize).fill("#000000");
+  set(boardRef, pixels);
 });
 
 function applyPixels() {
@@ -175,42 +218,61 @@ function draw() {
   }
 }
 
-// === Klickfunktion ===
+// === Jeder darf malen ===
 canvas.addEventListener("click", e => {
   const rect = canvas.getBoundingClientRect();
   const cx = Math.floor((e.clientX - rect.left) / (canvas.width / gridSize));
   const cy = Math.floor((e.clientY - rect.top) / (canvas.height / gridSize));
   if (cx < 0 || cy < 0 || cx >= gridSize || cy >= gridSize) return;
-
   const i = cy * gridSize + cx;
-  pixels[i] = admin ? "#000000" : colorPicker.value;
-  set(boardRef, pixels); // global speichern
+  pixels[i] = colorPicker.value;
+  set(boardRef, pixels);
 });
 
-// === Admin ===
-const adminHash = "261e65c62a2ad3234e9f77ac54a6bd0a0c2282d373970ea33cc7df66246cf8df";
-async function hash(str) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,"0")).join("");
-}
-
-adminBtn.addEventListener("click", async () => {
-  const pwd = prompt("Admin-Passwort:");
-  const inputHash = await hash(pwd);
-  if (inputHash === adminHash) {
-    admin = !admin;
-    adminBtn.textContent = admin ? "Admin: ON" : "Admin";
-    adminBtn.style.background = admin ? "#800" : "#333";
-    resetBtn.style.display = admin ? "inline-block" : "none";
-  } else alert("Falsches Passwort");
+// === Admin Login/Logout ===
+adminBtn.addEventListener("click", () => {
+  loginBox.style.display = "block";
 });
 
-// === Reset (löscht global) ===
+loginBtn.addEventListener("click", async () => {
+  try {
+    const userCred = await signInWithEmailAndPassword(auth, emailField.value, passField.value);
+    console.log("Eingeloggt:", userCred.user.email);
+    loginBox.style.display = "none";
+    emailField.value = passField.value = "";
+  } catch (err) {
+    alert("Login fehlgeschlagen: " + err.message);
+  }
+});
+
+logoutBtn.addEventListener("click", async () => {
+  await signOut(auth);
+  console.log("Abgemeldet");
+});
+
+onAuthStateChanged(auth, user => {
+  if (user) {
+    admin = true;
+    adminBtn.textContent = "Admin: ON";
+    adminBtn.style.background = "#800";
+    resetBtn.style.display = "inline-block";
+    logoutBtn.style.display = "inline-block";
+    loginBtn.style.display = "none";
+  } else {
+    admin = false;
+    adminBtn.textContent = "Login";
+    adminBtn.style.background = "#333";
+    resetBtn.style.display = "none";
+    logoutBtn.style.display = "none";
+    loginBtn.style.display = "inline-block";
+  }
+});
+
+// === Reset (nur Admin darf löschen) ===
 resetBtn.addEventListener("click", () => {
   if (!admin) return;
   if (confirm("Wirklich alles löschen?")) {
-    pixels = Array(gridSize * gridSize).fill("#000000");
-    set(boardRef, pixels);
+    set(resetRef, Date.now()); // Reset-Trigger auslösen
   }
 });
 </script>
