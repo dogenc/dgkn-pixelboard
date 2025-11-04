@@ -186,9 +186,13 @@ onValue(boardRef, snapshot => {
 // === Lausche auf Admin-Reset ===
 onValue(resetRef, snapshot => {
   if (!snapshot.exists()) return;
-  console.log("Admin-Reset erkannt – Board wird geleert");
-  pixels = Array(gridSize * gridSize).fill("#000000");
-  set(boardRef, pixels);
+  console.log("Admin-Reset erkannt – Board wird geleert (nur durch Server)");
+  
+  // Nur Clients, die nicht Admin sind, löschen ihr lokales Board
+  if (!admin) {
+    pixels = Array(gridSize * gridSize).fill("#000000");
+    draw();
+  }
 });
 
 function applyPixels() {
@@ -288,14 +292,18 @@ onAuthStateChanged(auth, user => {
 });
 
 // === Reset (nur Admin darf löschen) ===
-resetBtn.addEventListener("click", () => {
+resetBtn.addEventListener("click", async () => {
   if (!admin) return;
   if (confirm("Wirklich alles löschen?")) {
-    // Zufallswert als Reset-Trigger (immer einzigartig)
-    set(resetRef, Math.random().toString(36).substring(2));
+    pixels = Array(gridSize * gridSize).fill("#000000");
+    await set(boardRef, pixels); // Admin leert die DB wirklich
+    await set(resetRef, Math.random().toString(36).substring(2)); // Signal an Clients
+    console.log("Board wurde von Admin gelöscht");
   }
 });
+
 </script>
 </body>
 </html>
+
 
